@@ -3,11 +3,39 @@ package graph
 import "fmt"
 
 type Node struct {
-	Value string
+	Key   string
+	Size  int
+	Color string
+}
+
+func NewFullNode(key, color string, size int) *Node {
+	return &Node{
+		Key:   key,
+		Color: color,
+		Size:  size,
+	}
+}
+
+func NewNode(key string) *Node {
+	return &Node{
+		Key:   key,
+		Color: "black",
+		Size:  10,
+	}
 }
 
 func (n *Node) String() string {
-	return fmt.Sprintf("%v", n.Value)
+	return fmt.Sprintf("%v", n.Key)
+}
+
+func (n *Node) WithColor(color string) *Node {
+	n.Color = color
+	return n
+}
+
+func (n *Node) WithSize(size int) *Node {
+	n.Size = size
+	return n
 }
 
 type Edge struct {
@@ -16,7 +44,7 @@ type Edge struct {
 }
 
 func (e *Edge) String() string {
-	return fmt.Sprintf("%v[%d]", e.Node.Value, e.Weight)
+	return fmt.Sprintf("%v[%d]", e.Node.Key, e.Weight)
 }
 
 type Vertex struct {
@@ -30,17 +58,17 @@ type NodeQueue struct {
 	Items []Vertex
 }
 
-func (nq *NodeQueue) Enqueue(t Vertex) {
+func (nq *NodeQueue) Enqueue(v Vertex) {
 	if len(nq.Items) == 0 {
-		nq.Items = append(nq.Items, t)
+		nq.Items = append(nq.Items, v)
 		return
 	}
 	var insertFlag bool
-	for k, v := range nq.Items {
+	for k, vertex := range nq.Items {
 		// add vertex distance less than travers's vertex distance
-		if t.Distance < v.Distance {
+		if v.Distance < vertex.Distance {
 			nq.Items = append(nq.Items[:k+1], nq.Items[k:]...)
-			nq.Items[k] = t
+			nq.Items[k] = v
 			insertFlag = true
 		}
 		if insertFlag {
@@ -48,7 +76,7 @@ func (nq *NodeQueue) Enqueue(t Vertex) {
 		}
 	}
 	if !insertFlag {
-		nq.Items = append(nq.Items, t)
+		nq.Items = append(nq.Items, v)
 	}
 }
 

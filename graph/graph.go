@@ -2,12 +2,19 @@ package graph
 
 import (
 	"fmt"
+	"io"
 	"math"
-	"sync"
+	"os"
+
+	"github.com/go-echarts/go-echarts/v2/charts"
+	"github.com/go-echarts/go-echarts/v2/components"
+	"github.com/go-echarts/go-echarts/v2/opts"
 )
 
 type InputGraph struct {
-	InputData []InputData
+	Name       string
+	InputData  []InputData
+	InputEdges []InputEdges
 }
 
 func (ig *InputGraph) Validate() error {
@@ -34,45 +41,51 @@ type InputData struct {
 	Weight int
 }
 
+type InputEdges struct {
+	From   *Node
+	To     *Node
+	Weight int
+}
+
 type Response struct {
 	Path     []string `json:"path"`
 	Distance int      `json:"distance"`
 }
 
 type Graph struct {
+	Name  string
 	Nodes []*Node
 	Edges map[Node][]*Edge
-	lock  sync.RWMutex
 }
 
-func New(data InputGraph) *Graph {
-	var g Graph
+func New(inputGraph InputGraph) *Graph {
+	g := Graph{Name: inputGraph.Name}
 	nodes := make(map[string]*Node)
-	for _, v := range data.InputData {
+	for _, n := range inputGraph.InputEdges {
+		from := n.From
+		if _, found := nodes[from.Key]; !found {
+			nA := NewFullNode(from.Key, from.Color, from.Size)
+			nodes[from.Key] = nA
+			g.AddNode(nA)
+		}
+		to := n.To
 
-		if _, found := nodes[v.From]; !found {
-			nA := Node{v.From}
-			nodes[v.From] = &nA
-			g.AddNode(&nA)
+		if _, found := nodes[to.Key]; !found {
+			nA := NewFullNode(to.Key, to.Color, to.Size)
+			nodes[to.Key] = nA
+			g.AddNode(nA)
 		}
-		if _, found := nodes[v.To]; !found {
-			nA := Node{v.To}
-			nodes[v.To] = &nA
-			g.AddNode(&nA)
-		}
-		g.AddEdge(nodes[v.From], nodes[v.To], v.Weight)
+
+		g.AddEdge(nodes[from.Key], nodes[to.Key], n.Weight)
 	}
 	return &g
 }
 
 func (g *Graph) AddNode(n *Node) {
-	g.lock.Lock()
 	g.Nodes = append(g.Nodes, n)
-	g.lock.Unlock()
 }
 
 func (g *Graph) AddEdge(n1, n2 *Node, weight int) {
-	g.lock.Lock()
 	if g.Edges == nil {
 		g.Edges = make(map[Node][]*Edge)
 	}
@@ -82,13 +95,13 @@ func (g *Graph) AddEdge(n1, n2 *Node, weight int) {
 	}
 
 	g.Edges[*n1] = append(g.Edges[*n1], &ed1)
-
-	g.lock.Unlock()
 }
 
 func (g *Graph) Print() {
+	fmt.Printf("GRAPH: %s\n", g.Name)
+
 	for _, node := range g.Nodes {
-		fmt.Printf("\nNODE: %v: ", node.String())
+		fmt.Printf("\nNODE[%s]:", node.String())
 		for _, edge := range g.Edges[*node] {
 			fmt.Printf(" %v ", edge.String())
 		}
@@ -108,39 +121,39 @@ func (g *Graph) getShortestPath(startNode *Node, endNode *Node) ([]string, int) 
 		Distance: 0,
 	}
 	for _, nval := range g.Nodes {
-		dist[nval.Value] = math.MaxInt64
+		dist[nval.Key] = math.MaxInt64
 	}
-	dist[startNode.Value] = start.Distance
+	dist[startNode.Key] = start.Distance
 	pq.Enqueue(start)
 
 	for !pq.IsEmpty() {
 		v := pq.Dequeue()
-		if visited[v.Node.Value] {
+		if visited[v.Node.Key] {
 			continue
 		}
-		visited[v.Node.Value] = true
+		visited[v.Node.Key] = true
 		near := g.Edges[*v.Node]
 
 		for _, val := range near {
-			if !visited[val.Node.Value] {
-				if dist[v.Node.Value]+val.Weight < dist[val.Node.Value] {
+			if !visited[val.Node.Key] {
+				if dist[v.Node.Key]+val.Weight < dist[val.Node.Key] {
 					store := Vertex{
 						Node:     val.Node,
-						Distance: dist[v.Node.Value] + val.Weight,
+						Distance: dist[v.Node.Key] + val.Weight,
 					}
-					dist[val.Node.Value] = dist[v.Node.Value] + val.Weight
+					dist[val.Node.Key] = dist[v.Node.Key] + val.Weight
 
-					prev[val.Node.Value] = v.Node.Value
+					prev[val.Node.Key] = v.Node.Key
 					pq.Enqueue(store)
 				}
 			}
 		}
 	}
 
-	pathval := prev[endNode.Value]
+	pathval := prev[endNode.Key]
 	var finalArr []string
-	finalArr = append(finalArr, endNode.Value)
-	for pathval != startNode.Value {
+	finalArr = append(finalArr, endNode.Key)
+	for pathval != startNode.Key {
 		finalArr = append(finalArr, pathval)
 		pathval = prev[pathval]
 	}
@@ -149,14 +162,77 @@ func (g *Graph) getShortestPath(startNode *Node, endNode *Node) ([]string, int) 
 	for i, j := 0, len(finalArr)-1; i < j; i, j = i+1, j-1 {
 		finalArr[i], finalArr[j] = finalArr[j], finalArr[i]
 	}
-	return finalArr, dist[endNode.Value]
+	return finalArr, dist[endNode.Key]
 
 }
 
-func (g *Graph) GetShortestPath(from, to string) *Response {
-	path, distance := g.getShortestPath(&Node{from}, &Node{to})
+func (g *Graph) GetShortestPath(from, to *Node) *Response {
+	path, distance := g.getShortestPath(from, to)
 	return &Response{
 		Path:     path,
 		Distance: distance,
 	}
+}
+
+func (g *Graph) CreateChart() error {
+	page := components.NewPage()
+
+	page.AddCharts(graphChart(g))
+
+	file, err := os.Create(g.Name + ".html")
+	if err != nil {
+		return err
+	}
+
+	if err := page.Render(io.MultiWriter(file)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func graphChart(g *Graph) *charts.Graph {
+	graph := charts.NewGraph()
+	graph.SetGlobalOptions(
+		charts.WithTitleOpts(opts.Title{Title: g.Name}),
+	)
+
+	links := make([]opts.GraphLink, 0)
+	for n, edges := range g.Edges {
+		for _, e := range edges {
+			links = append(links, opts.GraphLink{
+				Source: n.Key,
+				Target: e.Node.Key,
+				Value:  float32(e.Weight * 100),
+			})
+		}
+	}
+
+	graphNodes := make([]opts.GraphNode, 0)
+	for _, n := range g.Nodes {
+		graphNodes = append(graphNodes, opts.GraphNode{
+			Name:       n.Key,
+			SymbolSize: n.Size,
+			ItemStyle:  &opts.ItemStyle{Color: n.Color},
+		})
+	}
+
+	graph.AddSeries("graph", graphNodes, links,
+		charts.WithGraphChartOpts(
+			opts.GraphChart{
+				Layout: "force",
+				Force: &opts.GraphForce{
+					Repulsion:  1000,
+					Gravity:    1,
+					EdgeLength: 30,
+				},
+			},
+		),
+		charts.WithLabelOpts(opts.Label{
+			Show:     true,
+			Position: "right",
+		}),
+	)
+
+	return graph
 }
